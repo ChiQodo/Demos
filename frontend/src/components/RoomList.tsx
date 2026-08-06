@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Room } from '../types'
-
 interface RoomListProps {
   rooms: Room[]
   selectedRoom: Room | null
@@ -8,11 +7,9 @@ interface RoomListProps {
   onCreateRoom: (name: string) => void
   username: string
 }
-
 function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }: RoomListProps) {
   const [isCreating, setIsCreating] = useState(false)
   const [newRoomName, setNewRoomName] = useState('')
-
   const handleCreateRoom = (e: React.FormEvent) => {
     e.preventDefault()
     if (newRoomName.trim()) {
@@ -21,7 +18,6 @@ function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }:
       setIsCreating(false)
     }
   }
-
   return (
     <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
       {/* Header */}
@@ -29,7 +25,6 @@ function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }:
         <h2 className="text-xl font-bold text-gray-800">Rooms</h2>
         <p className="text-sm text-gray-500 mt-1">Logged in as: {username}</p>
       </div>
-
       {/* Create Room Button */}
       <div className="p-4 border-b border-gray-200">
         {!isCreating ? (
@@ -83,13 +78,18 @@ function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }:
           </form>
         )}
       </div>
-
       {/* Room List */}
       <div className="flex-1 overflow-y-auto">
         {rooms.length === 0 ? (
           <div className="p-4 text-center text-gray-500">
             <p>No rooms yet</p>
             <p className="text-sm mt-1">Create one to get started!</p>
+            <button
+              onClick={() => setIsCreating(true)}
+              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-200 flex items-center justify-center mt-3"
+            >
+              Create your first room
+            </button>
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
@@ -102,8 +102,10 @@ function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }:
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-gray-800">{room.name}</h3>
-                  {room._count && room._count.messages > 0 && (
+                  <h3 className="font-medium text-gray-800">
+                    {room.name.length > 30 ? room.name.slice(0, 30) + '...' : room.name}
+                  </h3>
+                  {room._count.messages > 0 && (
                     <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
                       {room._count.messages}
                     </span>
@@ -120,5 +122,4 @@ function RoomList({ rooms, selectedRoom, onSelectRoom, onCreateRoom, username }:
     </div>
   )
 }
-
 export default RoomList
