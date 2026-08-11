@@ -10,6 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { RoomService } from '../room/room.service';
 import { RedisService } from '../redis/redis.service';
+import { ModerationService } from '../moderation/moderation.service';
 
 interface JoinRoomPayload {
   roomId: string;
@@ -35,6 +36,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly roomService: RoomService,
     private readonly redisService: RedisService,
+    private readonly moderationService: ModerationService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -90,6 +92,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: SendMessagePayload,
   ) {
     const { roomId, username, content } = payload;
+
+    const moderation = await this.moderationService.moderate(username, content);
+    if (!moderation.allowed) {
+      client.emit('messageRejected', { reason: moderation.reason });
+      return;
+    }
 
     // Save message to database
     const message = await this.roomService.createMessage(roomId, username, content);

@@ -6,10 +6,18 @@ import { PrismaService } from './prisma/prisma.service';
 import { RoomService } from './room/room.service';
 import { RoomController } from './room/room.controller';
 import { RedisService } from './redis/redis.service';
+import { ModerationService } from './moderation/moderation.service';
 
 @Module({
   imports: [],
   controllers: [AppController, RoomController],
-  providers: [AppService, ChatGateway, PrismaService, RoomService, RedisService],
+  providers: [
+    AppService,
+    ChatGateway,
+    PrismaService,
+    RoomService,
+    RedisService,
+    ModerationService,
+  ],
 })
 export class AppModule {}
