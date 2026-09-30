@@ -27,7 +27,21 @@ model Message {
   roomId    String
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+  reactions Reaction[]
 
   @@map("messages")
   @@index([roomId])
+}
+
+model Reaction {
+  id        String   @id @default(uuid())
+  emoji     String
+  username  String
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, username, emoji])
+  @@map("reactions")
+  @@index([messageId])
 }

@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+const reactionSelect = { emoji: true, username: true } as const;
 
 @Injectable()
 export class RoomService {
@@ -29,6 +32,9 @@ export class RoomService {
         messages: {
           orderBy: { createdAt: 'asc' },
           take: 50,
+          include: {
+            reactions: { select: reactionSelect, orderBy: { createdAt: 'asc' } },
+          },
         },
       },
     });
@@ -50,5 +56,40 @@ export class RoomService {
         content,
       },
     });
+  }
+
+  /**
+   * Idempotently adds or removes one user's reaction. Returns false when the
+   * message isn't in the given room.
+   */
+  async setReaction(
+    roomId: string,
+    messageId: string,
+    username: string,
+    emoji: string,
+    active: boolean,
+  ) {
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, roomId },
+      select: { id: true },
+    });
+    if (!message) return false;
+
+    if (active) {
+      try {
+        await this.prisma.reaction.create({ data: { messageId, username, emoji } });
+      } catch (error) {
+        // Already present (e.g. another tab added it): the desired state holds.
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== 'P2002'
+        ) {
+          throw error;
+        }
+      }
+    } else {
+      await this.prisma.reaction.deleteMany({ where: { messageId, username, emoji } });
+    }
+    return true;
   }
 }

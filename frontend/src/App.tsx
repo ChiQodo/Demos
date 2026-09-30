@@ -4,6 +4,8 @@ import ChatRoom from './components/ChatRoom'
 import { Room } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+// Must match MAX_USERNAME_LENGTH in backend/src/chat/chat.validation.ts.
+const MAX_USERNAME_LENGTH = 32
 
 function App() {
   const [rooms, setRooms] = useState<Room[]>([])
@@ -43,7 +45,9 @@ function App() {
 
   const handleUsernameSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (username.trim()) {
+    const trimmed = username.trim()
+    if (trimmed && trimmed.length <= MAX_USERNAME_LENGTH) {
+      setUsername(trimmed)
       setIsUsernameSet(true)
     }
   }
@@ -67,6 +71,7 @@ function App() {
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Your name"
+                maxLength={MAX_USERNAME_LENGTH}
                 required
               />
             </div>
