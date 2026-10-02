@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const reactionSelect = { emoji: true, username: true } as const;
 
+const messageInclude = {
+  reactions: { select: reactionSelect, orderBy: { createdAt: 'asc' } },
+} satisfies Prisma.MessageInclude;
+
+export const DEFAULT_PAGE_SIZE = 50;
+
 @Injectable()
 export class RoomService {
   constructor(private prisma: PrismaService) {}
@@ -25,27 +31,44 @@ export class RoomService {
     });
   }
 
+  /** The room with its newest page of messages (oldest first). */
   async getRoomById(id: string) {
-    return this.prisma.room.findUnique({
-      where: { id },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          take: 50,
-          include: {
-            reactions: { select: reactionSelect, orderBy: { createdAt: 'asc' } },
-          },
-        },
-      },
-    });
+    const room = await this.prisma.room.findUnique({ where: { id } });
+    if (!room) return null;
+    const page = await this.getRoomMessages(id, undefined, DEFAULT_PAGE_SIZE);
+    return { ...room, messages: page?.messages ?? [], hasMoreMessages: page?.hasMore ?? false };
   }
 
-  async getRoomMessages(roomId: string, limit = 50) {
-    return this.prisma.message.findMany({
-      where: { roomId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+  /**
+   * One page of messages older than `before` (or the newest page), returned
+   * oldest first. Returns null when `before` isn't a message in this room.
+   */
+  async getRoomMessages(roomId: string, before?: string, limit = DEFAULT_PAGE_SIZE) {
+    let where: Prisma.MessageWhereInput = { roomId };
+    if (before) {
+      const cursor = await this.prisma.message.findFirst({
+        where: { id: before, roomId },
+        select: { id: true, createdAt: true },
+      });
+      if (!cursor) return null;
+      // (createdAt, id) keyset so messages sharing a timestamp aren't skipped.
+      where = {
+        roomId,
+        OR: [
+          { createdAt: { lt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+        ],
+      };
+    }
+
+    const rows = await this.prisma.message.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: messageInclude,
     });
+    const hasMore = rows.length > limit;
+    return { messages: rows.slice(0, limit).reverse(), hasMore };
   }
 
   async createMessage(roomId: string, username: string, content: string) {
