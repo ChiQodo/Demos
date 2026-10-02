@@ -147,6 +147,8 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       newSocket.emit('leaveRoom', { roomId: room.id, username })
       newSocket.close()
       setOnlineUsers([])
+      setMessages([])
+      setEditingId(null)
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current)
       }

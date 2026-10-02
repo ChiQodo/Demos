@@ -96,13 +96,11 @@ export class RoomService {
       try {
         await this.prisma.reaction.create({ data: { messageId, username, emoji } });
       } catch (error) {
-        // Already present (e.g. another tab added it): the desired state holds.
-        if (
-          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-          error.code !== 'P2002'
-        ) {
-          throw error;
-        }
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError)) throw error;
+        // P2003: the message was deleted after the lookup above.
+        if (error.code === 'P2003') return false;
+        // P2002: already present (e.g. another tab added it); desired state holds.
+        if (error.code !== 'P2002') throw error;
       }
     } else {
       await this.prisma.reaction.deleteMany({ where: { messageId, username, emoji } });
