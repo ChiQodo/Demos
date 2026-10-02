@@ -19,7 +19,18 @@ export interface Message {
   username: string
   roomId: string
   createdAt: string
+  editedAt?: string | null
   reactions?: Reaction[]
+}
+
+export interface MessageEdited {
+  id: string
+  content: string
+  editedAt: string
+}
+
+export interface MessageDeleted {
+  id: string
 }
 
 export interface ReactionUpdate {

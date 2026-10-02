@@ -58,6 +58,23 @@ export class RoomService {
     });
   }
 
+  // Ownership is enforced in the WHERE clause, so the check and write are atomic.
+  async editMessage(roomId: string, messageId: string, username: string, content: string) {
+    const editedAt = new Date();
+    const { count } = await this.prisma.message.updateMany({
+      where: { id: messageId, roomId, username },
+      data: { content, editedAt },
+    });
+    return count > 0 ? { id: messageId, content, editedAt } : null;
+  }
+
+  async deleteMessage(roomId: string, messageId: string, username: string) {
+    const { count } = await this.prisma.message.deleteMany({
+      where: { id: messageId, roomId, username },
+    });
+    return count > 0;
+  }
+
   /**
    * Idempotently adds or removes one user's reaction. Returns false when the
    * message isn't in the given room.

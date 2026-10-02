@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
-import { Room, Message, ReactionUpdate, PresenceUpdate, ChatError } from '../types'
+import {
+  Room,
+  Message,
+  ReactionUpdate,
+  PresenceUpdate,
+  ChatError,
+  MessageEdited,
+  MessageDeleted,
+} from '../types'
 import ReactionBar from './ReactionBar'
 import PresenceList from './PresenceList'
 
@@ -19,6 +27,11 @@ function applyReactionUpdate(messages: Message[], update: ReactionUpdate): Messa
   })
 }
 
+type MessagesUpdate = (messages: Message[]) => Message[]
+
+// Must match MAX_MESSAGE_LENGTH in backend/src/chat/chat.validation.ts.
+const MAX_MESSAGE_LENGTH = 2000
+
 interface ChatRoomProps {
   room: Room
   username: string
@@ -34,8 +47,10 @@ function ChatRoom({ room, username }: ChatRoomProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Reaction updates can arrive before roomHistory; replay them onto it.
-  const pendingReactionsRef = useRef<ReactionUpdate[] | null>(null)
+  // Live updates can arrive before roomHistory; replay them onto it.
+  const pendingUpdatesRef = useRef<MessagesUpdate[] | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -52,17 +67,17 @@ function ChatRoom({ room, username }: ChatRoomProps) {
 
     // Join on every connect so the room is rejoined after a reconnect
     newSocket.on('connect', () => {
-      pendingReactionsRef.current = []
+      pendingUpdatesRef.current = []
       newSocket.emit('joinRoom', { roomId: room.id, username })
     })
 
     // Listen for room history
     newSocket.on('roomHistory', (data: { messages: Message[] }) => {
       if (data.messages) {
-        const pending = pendingReactionsRef.current ?? []
-        setMessages(pending.reduce(applyReactionUpdate, data.messages))
+        const pending = pendingUpdatesRef.current ?? []
+        setMessages(pending.reduce((msgs, update) => update(msgs), data.messages))
       }
-      pendingReactionsRef.current = null
+      pendingUpdatesRef.current = null
     })
 
     // Listen for new messages
@@ -88,12 +103,29 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       }))
     })
 
-    newSocket.on('reactionUpdate', (update: ReactionUpdate) => {
-      if (pendingReactionsRef.current) {
-        pendingReactionsRef.current.push(update)
+    const applyLive = (update: MessagesUpdate) => {
+      if (pendingUpdatesRef.current) {
+        pendingUpdatesRef.current.push(update)
         return
       }
-      setMessages((prev) => applyReactionUpdate(prev, update))
+      setMessages(update)
+    }
+
+    newSocket.on('reactionUpdate', (update: ReactionUpdate) => {
+      applyLive((msgs) => applyReactionUpdate(msgs, update))
+    })
+
+    newSocket.on('messageEdited', (edited: MessageEdited) => {
+      applyLive((msgs) =>
+        msgs.map((m) =>
+          m.id === edited.id ? { ...m, content: edited.content, editedAt: edited.editedAt } : m,
+        ),
+      )
+    })
+
+    newSocket.on('messageDeleted', ({ id }: MessageDeleted) => {
+      applyLive((msgs) => msgs.filter((m) => m.id !== id))
+      setEditingId((current) => (current === id ? null : current))
     })
 
     newSocket.on('presenceUpdate', (data: PresenceUpdate) => {
@@ -167,6 +199,25 @@ function ChatRoom({ room, username }: ChatRoomProps) {
     }, 1000)
   }
 
+  const startEditing = (message: Message) => {
+    setEditingId(message.id)
+    setEditDraft(message.content)
+  }
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const content = editDraft.trim()
+    if (!socket || !editingId || !content) return
+    socket.emit('editMessage', { roomId: room.id, messageId: editingId, content })
+    setEditingId(null)
+  }
+
+  const handleDelete = (messageId: string) => {
+    if (socket && window.confirm('Delete this message?')) {
+      socket.emit('deleteMessage', { roomId: room.id, messageId })
+    }
+  }
+
   const handleSetReaction = (messageId: string, emoji: string, active: boolean) => {
     socket?.emit('setReaction', { roomId: room.id, messageId, username, emoji, active })
   }
@@ -227,7 +278,30 @@ function ChatRoom({ room, username }: ChatRoomProps) {
                   {message.username !== username && (
                     <p className="text-xs font-semibold mb-1">{message.username}</p>
                   )}
-                  <p className="break-words">{message.content}</p>
+                  {editingId === message.id ? (
+                    <form onSubmit={handleSaveEdit} className="flex flex-col gap-1">
+                      <input
+                        type="text"
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Escape' && setEditingId(null)}
+                        maxLength={MAX_MESSAGE_LENGTH}
+                        autoFocus
+                        aria-label="Edit message"
+                        className="px-2 py-1 rounded text-gray-800"
+                      />
+                      <div className="flex gap-2 text-xs">
+                        <button type="submit" disabled={!editDraft.trim()} className="underline">
+                          Save
+                        </button>
+                        <button type="button" onClick={() => setEditingId(null)} className="underline">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <p className="break-words">{message.content}</p>
+                  )}
                   <p
                     className={`text-xs mt-1 ${
                       message.username === username ? 'text-indigo-200' : 'text-gray-500'
@@ -237,8 +311,23 @@ function ChatRoom({ room, username }: ChatRoomProps) {
                       hour: '2-digit',
                       minute: '2-digit',
                     })}
+                    {message.editedAt && ' (edited)'}
                   </p>
                 </div>
+                {message.username === username && editingId !== message.id && (
+                  <div className="flex justify-end gap-2 mt-1 text-xs text-gray-500">
+                    <button type="button" onClick={() => startEditing(message)} className="hover:underline">
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(message.id)}
+                      className="hover:underline hover:text-red-600"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
                 <ReactionBar
                   reactions={message.reactions ?? []}
                   username={username}
