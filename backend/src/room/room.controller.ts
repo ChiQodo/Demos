@@ -44,8 +44,11 @@ export class RoomController {
     if (before !== undefined && !isUuid(before)) {
       throw new BadRequestException('before must be a message id');
     }
+    if (limitParam !== undefined && !/^\d+$/.test(limitParam)) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
     const limit = limitParam === undefined ? DEFAULT_PAGE_SIZE : Number(limitParam);
-    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) {
+    if (limit < 1 || limit > MAX_PAGE_SIZE) {
       throw new BadRequestException(`limit must be an integer from 1 to ${MAX_PAGE_SIZE}`);
     }
 

@@ -51,6 +51,9 @@ function ChatRoom({ room, username }: ChatRoomProps) {
   const prependAnchorRef = useRef<number | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  // Lets an in-flight older-page request detect that the user switched rooms.
+  const currentRoomIdRef = useRef(room.id)
+  currentRoomIdRef.current = room.id
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Live updates can arrive before roomHistory; replay them onto it.
@@ -164,6 +167,8 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       setOnlineUsers([])
       setMessages([])
       setEditingId(null)
+      setHasMore(false)
+      setIsLoadingOlder(false)
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current)
       }
@@ -217,14 +222,17 @@ function ChatRoom({ room, username }: ChatRoomProps) {
   }
 
   const loadOlder = async () => {
+    if (isLoadingOlder) return
+    const roomId = room.id
     const oldest = messages[0]
-    if (!oldest || isLoadingOlder) return
     setIsLoadingOlder(true)
     try {
-      const params = new URLSearchParams({ before: oldest.id })
-      const response = await fetch(`${API_URL}/rooms/${room.id}/messages?${params}`)
+      // With no messages loaded (e.g. all deleted), fetch the newest page.
+      const params = new URLSearchParams(oldest ? { before: oldest.id } : {})
+      const response = await fetch(`${API_URL}/rooms/${roomId}/messages?${params}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const page: { messages: Message[]; hasMore: boolean } = await response.json()
+      if (currentRoomIdRef.current !== roomId) return
       prependAnchorRef.current = scrollContainerRef.current?.scrollHeight ?? null
       setMessages((prev) => {
         const known = new Set(prev.map((m) => m.id))
@@ -235,7 +243,7 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       console.error('Error loading older messages:', error)
       setChatError('Could not load older messages')
     } finally {
-      setIsLoadingOlder(false)
+      if (currentRoomIdRef.current === roomId) setIsLoadingOlder(false)
     }
   }
 
