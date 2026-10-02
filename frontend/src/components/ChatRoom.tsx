@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import {
   Room,
@@ -13,6 +13,7 @@ import ReactionBar from './ReactionBar'
 import PresenceList from './PresenceList'
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
 function applyReactionUpdate(messages: Message[], update: ReactionUpdate): Message[] {
   return messages.map((message) => {
@@ -45,6 +46,14 @@ function ChatRoom({ room, username }: ChatRoomProps) {
   const [onlineUsers, setOnlineUsers] = useState<string[]>([])
   const [chatError, setChatError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  // scrollHeight before prepending older messages, to keep the view anchored.
+  const prependAnchorRef = useRef<number | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  // Lets an in-flight older-page request detect that the user switched rooms.
+  const currentRoomIdRef = useRef(room.id)
+  currentRoomIdRef.current = room.id
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Live updates can arrive before roomHistory; replay them onto it.
@@ -58,7 +67,15 @@ function ChatRoom({ room, username }: ChatRoomProps) {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages.length])
+  }, [messages[messages.length - 1]?.id])
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    if (container && prependAnchorRef.current !== null) {
+      container.scrollTop += container.scrollHeight - prependAnchorRef.current
+      prependAnchorRef.current = null
+    }
+  }, [messages])
 
   useEffect(() => {
     // Connect to socket
@@ -72,7 +89,8 @@ function ChatRoom({ room, username }: ChatRoomProps) {
     })
 
     // Listen for room history
-    newSocket.on('roomHistory', (data: { messages: Message[] }) => {
+    newSocket.on('roomHistory', (data: { messages: Message[]; hasMoreMessages?: boolean }) => {
+      setHasMore(Boolean(data.hasMoreMessages))
       if (data.messages) {
         const pending = pendingUpdatesRef.current ?? []
         setMessages(pending.reduce((msgs, update) => update(msgs), data.messages))
@@ -149,6 +167,8 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       setOnlineUsers([])
       setMessages([])
       setEditingId(null)
+      setHasMore(false)
+      setIsLoadingOlder(false)
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current)
       }
@@ -201,6 +221,32 @@ function ChatRoom({ room, username }: ChatRoomProps) {
     }, 1000)
   }
 
+  const loadOlder = async () => {
+    if (isLoadingOlder) return
+    const roomId = room.id
+    const oldest = messages[0]
+    setIsLoadingOlder(true)
+    try {
+      // With no messages loaded (e.g. all deleted), fetch the newest page.
+      const params = new URLSearchParams(oldest ? { before: oldest.id } : {})
+      const response = await fetch(`${API_URL}/rooms/${roomId}/messages?${params}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const page: { messages: Message[]; hasMore: boolean } = await response.json()
+      if (currentRoomIdRef.current !== roomId) return
+      prependAnchorRef.current = scrollContainerRef.current?.scrollHeight ?? null
+      setMessages((prev) => {
+        const known = new Set(prev.map((m) => m.id))
+        return [...page.messages.filter((m) => !known.has(m.id)), ...prev]
+      })
+      setHasMore(page.hasMore)
+    } catch (error) {
+      console.error('Error loading older messages:', error)
+      setChatError('Could not load older messages')
+    } finally {
+      if (currentRoomIdRef.current === roomId) setIsLoadingOlder(false)
+    }
+  }
+
   const startEditing = (message: Message) => {
     setEditingId(message.id)
     setEditDraft(message.content)
@@ -242,7 +288,19 @@ function ChatRoom({ room, username }: ChatRoomProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+        {hasMore && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={loadOlder}
+              disabled={isLoadingOlder}
+              className="text-sm text-indigo-600 hover:underline disabled:text-gray-400"
+            >
+              {isLoadingOlder ? 'Loading…' : 'Load older messages'}
+            </button>
+          </div>
+        )}
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-500">
             <div className="text-center">

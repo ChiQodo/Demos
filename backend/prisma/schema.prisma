@@ -32,6 +32,7 @@ model Message {
 
   @@map("messages")
   @@index([roomId])
+  @@index([roomId, createdAt, id])
 }
 
 model Reaction {
