@@ -58,6 +58,23 @@ export class RoomService {
     });
   }
 
+  // Ownership is enforced in the WHERE clause, so the check and write are atomic.
+  async editMessage(roomId: string, messageId: string, username: string, content: string) {
+    const editedAt = new Date();
+    const { count } = await this.prisma.message.updateMany({
+      where: { id: messageId, roomId, username },
+      data: { content, editedAt },
+    });
+    return count > 0 ? { id: messageId, content, editedAt } : null;
+  }
+
+  async deleteMessage(roomId: string, messageId: string, username: string) {
+    const { count } = await this.prisma.message.deleteMany({
+      where: { id: messageId, roomId, username },
+    });
+    return count > 0;
+  }
+
   /**
    * Idempotently adds or removes one user's reaction. Returns false when the
    * message isn't in the given room.
@@ -79,13 +96,11 @@ export class RoomService {
       try {
         await this.prisma.reaction.create({ data: { messageId, username, emoji } });
       } catch (error) {
-        // Already present (e.g. another tab added it): the desired state holds.
-        if (
-          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-          error.code !== 'P2002'
-        ) {
-          throw error;
-        }
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError)) throw error;
+        // P2003: the message was deleted after the lookup above.
+        if (error.code === 'P2003') return false;
+        // P2002: already present (e.g. another tab added it); desired state holds.
+        if (error.code !== 'P2002') throw error;
       }
     } else {
       await this.prisma.reaction.deleteMany({ where: { messageId, username, emoji } });

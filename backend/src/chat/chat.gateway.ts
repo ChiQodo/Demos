@@ -11,7 +11,12 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { RoomService } from '../room/room.service';
 import { RedisService } from '../redis/redis.service';
-import { isReactionEmoji, isUuid, normalizeUsername } from './chat.validation';
+import {
+  isReactionEmoji,
+  isUuid,
+  normalizeContent,
+  normalizeUsername,
+} from './chat.validation';
 
 interface JoinRoomPayload {
   roomId: string;
@@ -24,6 +29,17 @@ interface SetReactionPayload {
   username: string;
   emoji: string;
   active: boolean;
+}
+
+interface EditMessagePayload {
+  roomId: string;
+  messageId: string;
+  content: string;
+}
+
+interface DeleteMessagePayload {
+  roomId: string;
+  messageId: string;
 }
 
 // Presence is derived from live sockets, so it can never go stale. It spans
@@ -161,6 +177,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Per-user deltas commute, so clients converge whatever order they arrive in.
     this.server.to(roomId).emit('reactionUpdate', { messageId, emoji, username, active });
     this.logger.log({ event: 'reaction_set', roomId, messageId, active });
+  }
+
+  // Identity is the name the socket joined the room with, not a payload field,
+  // so a socket can only edit/delete messages under the name it is shown as.
+  @SubscribeMessage('editMessage')
+  async handleEditMessage(
+    @ConnectedSocket() client: ChatSocket,
+    @MessageBody() payload: EditMessagePayload,
+  ) {
+    const roomId = payload?.roomId;
+    const messageId = payload?.messageId;
+    const content = normalizeContent(payload?.content);
+    if (!isUuid(roomId) || !isUuid(messageId) || !content) {
+      this.reject(client, 'editMessage', 'Invalid edit', roomId);
+      return;
+    }
+    const username = client.data.joinedRooms?.get(roomId);
+    if (!username || !client.rooms.has(roomId)) {
+      this.reject(client, 'editMessage', 'Join the room first', roomId);
+      return;
+    }
+
+    const edited = await this.roomService.editMessage(roomId, messageId, username, content);
+    if (!edited) {
+      this.reject(client, 'editMessage', 'You can only edit your own messages', roomId);
+      return;
+    }
+
+    this.server.to(roomId).emit('messageEdited', edited);
+    this.logger.log({ event: 'message_edited', roomId, messageId });
+  }
+
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(
+    @ConnectedSocket() client: ChatSocket,
+    @MessageBody() payload: DeleteMessagePayload,
+  ) {
+    const roomId = payload?.roomId;
+    const messageId = payload?.messageId;
+    if (!isUuid(roomId) || !isUuid(messageId)) {
+      this.reject(client, 'deleteMessage', 'Invalid delete', roomId);
+      return;
+    }
+    const username = client.data.joinedRooms?.get(roomId);
+    if (!username || !client.rooms.has(roomId)) {
+      this.reject(client, 'deleteMessage', 'Join the room first', roomId);
+      return;
+    }
+
+    const deleted = await this.roomService.deleteMessage(roomId, messageId, username);
+    if (!deleted) {
+      this.reject(client, 'deleteMessage', 'You can only delete your own messages', roomId);
+      return;
+    }
+
+    this.server.to(roomId).emit('messageDeleted', { id: messageId });
+    this.logger.log({ event: 'message_deleted', roomId, messageId });
   }
 
   private reject(client: Socket, handler: string, reason: string, roomId?: unknown) {

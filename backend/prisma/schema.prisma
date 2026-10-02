@@ -27,6 +27,7 @@ model Message {
   roomId    String
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+  editedAt  DateTime?
   reactions Reaction[]
 
   @@map("messages")
